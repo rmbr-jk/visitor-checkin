@@ -2,7 +2,9 @@
 <html>
 <head>
   <base target="_top">
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>리멤버 방문자 체크인</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
   <style>
@@ -428,12 +430,11 @@
 </div><!-- /body-wrap -->
 
 <script>
-  // ========================================
-  // 🔧 설정: Google Apps Script Web App URL
-  // ========================================
-  // GAS에서 직접 서빙하므로 상대 경로 사용 (CORS 문제 완전 해결!)
-  const API_URL = window.location.href.split('?')[0];
-  const SECRET_TOKEN = 'RMB_CHECK_2026_7d8f9a2b4c6e1f3g'; // 보안 토큰
+  // ==========================================
+  // API 설정
+  // ==========================================
+  const API_URL = 'https://script.google.com/macros/s/AKfycbz5wZdEoJrN4Tb-xuOMqcvnhnbQU3qF_SvEdgdRQ7gJ6eP7sQlkE8Vh5QGYHU3bb0dW/exec';
+  const SECRET_TOKEN = 'RMB_CHECK_2026_7d8f9a2b4c6e1f3g';
 
   let foundVisitor = null;
   let signaturePad;
@@ -490,33 +491,67 @@
     }
   };
 
-  // ========================================
-  // 🌐 API 호출 헬퍼 함수
-  // ========================================
-  async function callAPI(action, params) {
+  // ==========================================
+  // API 호출 헬퍼 (JSONP 방식)
+  // ==========================================
+  function callGasAPI(action, data) {
+    return new Promise((resolve, reject) => {
+      const callbackName = 'jsonpCallback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+      // 콜백 함수 등록
+      window[callbackName] = function(response) {
+        delete window[callbackName];
+        document.body.removeChild(script);
+        resolve(response);
+      };
+
+      // URL 파라미터 구성
+      const params = new URLSearchParams({
+        token: SECRET_TOKEN,
+        action: action,
+        callback: callbackName,
+        ...data
+      });
+
+      // script 태그로 JSONP 요청
+      const script = document.createElement('script');
+      script.src = API_URL + '?' + params.toString();
+      script.onerror = function() {
+        delete window[callbackName];
+        document.body.removeChild(script);
+        reject(new Error('JSONP 요청 실패'));
+      };
+
+      document.body.appendChild(script);
+    });
+  }
+
+  // POST 전용 API (서명 이미지 전송용)
+  async function callGasAPIPost(action, data) {
     try {
       const response = await fetch(API_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ token: SECRET_TOKEN, action, ...params })
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token: SECRET_TOKEN,
+          action: action,
+          ...data
+        })
       });
 
       const result = await response.json();
-
-      if (result.success) {
-        return result.data;
-      } else {
-        throw new Error(result.error || '알 수 없는 오류');
-      }
+      return result;
     } catch (error) {
-      console.error('API 호출 오류:', error);
+      console.error('API 호출 에러:', error);
       throw error;
     }
   }
 
-  // ========================================
+  // ==========================================
   // 초기화
-  // ========================================
+  // ==========================================
   window.onload = () => {
     initSignaturePad();
     window.addEventListener("resize", initSignaturePad);
@@ -541,9 +576,9 @@
     }
   }
 
-  // ========================================
-  // 약관 보기
-  // ========================================
+  // ==========================================
+  // 약관 표시
+  // ==========================================
   function showTerms(type) {
     prevStep = document.querySelector('.page.active').id.replace('step', '');
     document.getElementById('termsTitle').innerText = legalTexts[type].title;
@@ -558,9 +593,9 @@
     changeStep(prevStep);
   }
 
-  // ========================================
-  // STEP 1: 예약 확인
-  // ========================================
+  // ==========================================
+  // 예약자 검색
+  // ==========================================
   async function checkVisitor() {
     const name = document.getElementById('visitorName').value.trim();
     const phone = document.getElementById('visitorPhone').value.trim();
@@ -575,30 +610,33 @@
     btn.innerText = "조회 중...";
 
     try {
-      const result = await callAPI('searchVisitor', {
+      const result = await callGasAPI('searchVisitor', {
         name: name,
         last4Digits: phone
       });
 
-      if (result && typeof result === 'object' && result.name) {
-        foundVisitor = result;
-        document.getElementById('visitorInfo').innerText = result.name + " 님";
+      btn.disabled = false;
+      btn.innerText = "예약 확인하기";
+
+      if (result.success && result.data) {
+        foundVisitor = result.data;
+        document.getElementById('visitorInfo').innerText = result.data.name + " 님";
         changeStep('2');
         initSignaturePad();
       } else {
         alert("오늘 날짜의 예약 정보를 찾을 수 없습니다.");
       }
+
     } catch (error) {
-      alert("서버 통신 오류: " + error.message);
-    } finally {
       btn.disabled = false;
       btn.innerText = "예약 확인하기";
+      alert("서버 통신 오류가 발생했습니다. 다시 시도해 주세요.");
     }
   }
 
-  // ========================================
-  // STEP 2: 체크인 (서명)
-  // ========================================
+  // ==========================================
+  // 체크인 제출
+  // ==========================================
   async function submitCheckIn() {
     if (signaturePad.isEmpty()) {
       alert("서명을 진행해 주세요.");
@@ -609,25 +647,42 @@
     btn.disabled = true;
     btn.innerText = "처리 중...";
 
-    try {
-      const signatureDataUrl = signaturePad.toDataURL('image/png');
+    const signatureDataUrl = signaturePad.toDataURL('image/png');
 
-      await callAPI('processCheckIn', {
+    try {
+      // 서명 이미지는 POST로 전송
+      const result = await callGasAPIPost('processCheckIn', {
         checkInData: foundVisitor,
         signatureDataUrl: signatureDataUrl
       });
 
-      changeStep('3');
+      if (result.success) {
+        changeStep('3');
+      } else {
+        btn.disabled = false;
+        btn.innerText = "서명 완료 및 체크인";
+        alert("체크인 처리 중 오류가 발생했습니다: " + (result.error || "알 수 없는 오류"));
+      }
+
     } catch (error) {
-      alert("오류가 발생했습니다: " + error.message);
       btn.disabled = false;
       btn.innerText = "서명 완료 및 체크인";
+      alert("오류가 발생했습니다. 다시 시도해 주세요.");
     }
   }
 
-  // ========================================
-  // STEP 1b: 당일방문(워크인)
-  // ========================================
+  // ==========================================
+  // 페이지 전환
+  // ==========================================
+  function changeStep(n) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    const target = document.getElementById('step' + n);
+    if (target) target.classList.add('active');
+  }
+
+  // ==========================================
+  // 당일 방문
+  // ==========================================
   function goToWalkIn() {
     const today = new Date();
     const yyyy = today.getFullYear();
@@ -657,34 +712,28 @@
     btn.innerText = "접수 중...";
 
     try {
-      const result = await callAPI('submitWalkIn', {
+      const result = await callGasAPI('submitWalkIn', {
         formData: { name, phone, org, purpose, qr1f, card, parking }
       });
 
-      if (result && typeof result === 'object' && result.name) {
-        foundVisitor = result;
-        document.getElementById('visitorInfo').innerText = result.name + " 님";
+      btn.disabled = false;
+      btn.innerText = "접수하기";
+
+      if (result.success && result.data) {
+        foundVisitor = result.data;
+        document.getElementById('visitorInfo').innerText = result.data.name + " 님";
         changeStep('2');
         initSignaturePad();
         window.scrollTo(0, 0);
       } else {
-        alert("접수 처리에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+        alert("접수 처리에 실패했습니다: " + (result.error || "알 수 없는 오류"));
       }
+
     } catch (error) {
-      alert("서버 통신 오류: " + error.message);
-    } finally {
       btn.disabled = false;
       btn.innerText = "접수하기";
+      alert("서버 통신 오류가 발생했습니다. 다시 시도해 주세요.");
     }
-  }
-
-  // ========================================
-  // 페이지 전환
-  // ========================================
-  function changeStep(n) {
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    const target = document.getElementById('step' + n);
-    if (target) target.classList.add('active');
   }
 </script>
 </body>
