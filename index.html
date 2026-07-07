@@ -432,6 +432,7 @@
   // 🔧 설정: Google Apps Script Web App URL
   // ========================================
   const API_URL = 'https://script.google.com/macros/s/AKfycbwevMsgO5CB6m1CHKToHX9UXNl6dV2WSpQ7QDd7ZxJ_4FjpuCt0K9YDla_LD0pWV2p-/exec';
+  const SECRET_TOKEN = 'RMB_CHECK_2026_7d8f9a2b4c6e1f3g'; // 보안 토큰
 
   let foundVisitor = null;
   let signaturePad;
@@ -496,7 +497,7 @@
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, ...params })
+        body: JSON.stringify({ token: SECRET_TOKEN, action, ...params })
       });
 
       const result = await response.json();
